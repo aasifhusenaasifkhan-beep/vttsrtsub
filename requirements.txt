@@ -1,0 +1,7 @@
+pyrogram
+tgcrypto
+requests
+faster-whisper
+pysubs2
+deep-translator
+indic-transliteration
