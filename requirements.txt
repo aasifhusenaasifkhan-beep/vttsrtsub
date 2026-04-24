@@ -4,4 +4,4 @@ requests
 faster-whisper
 pysubs2
 deep-translator
-indic-transliteration
+unidecode
