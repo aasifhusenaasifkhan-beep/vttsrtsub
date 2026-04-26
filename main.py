@@ -16,7 +16,8 @@ PORT = 10000
 app = Client("SubBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 users_data = {}
 
-def trigger_github(task_payload):
+# 🟢 FIX 1: ASYNC Trigger (Isse bot kabhi hang/sleep nahi hoga jab GitHub ko signal bhejega)
+def _send_trigger(task_payload):
     url = f"https://api.github.com/repos/{REPO_NAME}/actions/workflows/generate.yml/dispatches"
     headers = {
         "Authorization": f"token {GITHUB_TOKEN}",
@@ -28,6 +29,9 @@ def trigger_github(task_payload):
         return r.status_code == 204, r.text
     except Exception as e:
         return False, str(e)
+
+async def trigger_github(task_payload):
+    return await asyncio.to_thread(_send_trigger, task_payload)
 
 @app.on_message(filters.command("start"))
 async def start(client, message: Message):
@@ -49,13 +53,12 @@ async def generate_sub(client, message: Message):
     
     if not media: return await message.reply("❌ Please video/document pe reply karo.")
     
-    # ORIGINAL FILE NAME KO NIKALNA (Bin Extension Ke)
     original_name = getattr(media, "file_name", "video.mp4")
     if not original_name:
         original_name = "video.mp4"
     base_name = original_name.rsplit(".", 1)[0]
     
-    status = await message.reply("⏳ Sending Video extraction task to GitHub...")
+    status = await message.reply("⏳ Sending Task to GitHub Queue...")
     
     task = {
         "task_type": "extract_english",
@@ -63,14 +66,15 @@ async def generate_sub(client, message: Message):
         "format_type": format_type,
         "chat_id": str(message.chat.id),
         "msg_id": str(status.id),
-        "file_name": base_name  # Ye gaya GitHub ko Original Name
+        "file_name": base_name
     }
     
     users_data[message.from_user.id] = "processing"
-    success, err = trigger_github(task)
+    # Async await lagaya hai taaki bot zinda rahe
+    success, err = await trigger_github(task)
     
     if success:
-        await status.edit(f"✅ **Task Started!**\nName: `{base_name}`\nFormat: `.{format_type}`\nWait for 5-15 mins.")
+        await status.edit(f"✅ **Task Added to Queue!**\nName: `{base_name}`\nFormat: `.{format_type}`\n*(Agar koi file pehle se ban rahi hai, toh ye uske baad start hogi)*")
     else:
         await status.edit(f"❌ **Trigger Failed:** {err}")
 
@@ -87,7 +91,7 @@ async def translate_sub(client, message: Message):
     base_name = doc.file_name.rsplit(".", 1)[0]
     format_type = doc.file_name.split('.')[-1]
     
-    status = await message.reply("⏳ Sending Fast Translation task to GitHub...")
+    status = await message.reply("⏳ Sending Translation to GitHub Queue...")
     
     task = {
         "task_type": "translate_hinglish",
@@ -95,25 +99,35 @@ async def translate_sub(client, message: Message):
         "format_type": format_type,
         "chat_id": str(message.chat.id),
         "msg_id": str(status.id),
-        "file_name": base_name  # Ye gaya GitHub ko Original Name
+        "file_name": base_name
     }
     
     users_data[message.from_user.id] = "processing"
-    success, err = trigger_github(task)
+    # Async await lagaya hai
+    success, err = await trigger_github(task)
     
     if success:
-        await status.edit("✅ **Translation Started!**\nBatch Translating to Hinglish (Fast mode)...")
+        await status.edit("✅ **Added to Queue!**\nBatch Translating to Hinglish...\n*(Agar koi file pehle se ban rahi hai, toh ye uske baad start hogi)*")
     else:
         await status.edit(f"❌ **Trigger Failed:** {err}")
 
-# Dummy Server for Render 24/7 Uptime
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200); self.end_headers(); self.wfile.write(b"Bot is Alive!")
 
+# 🟢 FIX 2: ANTI-SLEEP (Render ko 15 min me sone nahi dega)
+async def keep_alive():
+    while True:
+        await asyncio.sleep(5 * 60) # Har 5 minute me bot khud ko jagayega
+        try:
+            requests.get("http://localhost:10000")
+        except:
+            pass
+
 async def main():
     await app.start()
     print("🤖 Bot Started Successfully!")
+    asyncio.create_task(keep_alive()) # Keep-alive start kiya
     await idle()
 
 if __name__ == "__main__":
