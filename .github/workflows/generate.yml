@@ -16,6 +16,11 @@ on:
       file_name:
         required: true
 
+# 🟢 FIX 3: QUEUE SYSTEM (Ek baar me 1 hi processing hogi, baaki wait karengi)
+concurrency:
+  group: sub-generator-queue
+  cancel-in-progress: false
+
 jobs:
   generate_job:
     runs-on: ubuntu-latest
