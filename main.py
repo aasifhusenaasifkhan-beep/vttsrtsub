@@ -3,7 +3,7 @@ import asyncio
 import threading
 import requests
 from pyrogram import Client, filters, idle
-from pyrogram.types import Message
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 API_ID = int(os.getenv("API_ID", "0"))
@@ -16,7 +16,6 @@ PORT = 10000
 app = Client("SubBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 users_data = {}
 
-# 🟢 FIX 1: ASYNC Trigger (Isse bot kabhi hang/sleep nahi hoga jab GitHub ko signal bhejega)
 def _send_trigger(task_payload):
     url = f"https://api.github.com/repos/{REPO_NAME}/actions/workflows/generate.yml/dispatches"
     headers = {
@@ -35,7 +34,7 @@ async def trigger_github(task_payload):
 
 @app.on_message(filters.command("start"))
 async def start(client, message: Message):
-    await message.reply("<b>🤖 Auto Subtitle Generator Bot</b>\n\n1. Video forward karo.\n2. Video pe reply karo `/vtt`, `/srt` ya `/ass`.\n3. English Sub banne ke baad, us file pe reply karo `/hienglish`.\n4. Bich me cancel karna ho to `/skip`.")
+    await message.reply("<b>🤖 Auto Subtitle Generator Bot</b>\n\nQueue System Active. Send Video -> Reply `/vtt`, `/srt`, `/ass`.")
 
 @app.on_message(filters.command("skip"))
 async def cancel_task(client, message: Message):
@@ -54,80 +53,97 @@ async def generate_sub(client, message: Message):
     if not media: return await message.reply("❌ Please video/document pe reply karo.")
     
     original_name = getattr(media, "file_name", "video.mp4")
-    if not original_name:
-        original_name = "video.mp4"
+    if not original_name: original_name = "video.mp4"
     base_name = original_name.rsplit(".", 1)[0]
     
+    # ASS file ke liye Style poochne ka option
+    if format_type == "ass":
+        users_data[message.from_user.id] = {
+            "task_type": "extract_english", "file_id": media.file_id, 
+            "format_type": "ass", "chat_id": str(message.chat.id), "file_name": base_name
+        }
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎨 ASI Style + Watermark", callback_data="style_asi")],
+            [InlineKeyboardButton("📄 Normal Direct Style", callback_data="style_normal")]
+        ])
+        await message.reply("❓ **Kaunsa Style lagana hai?**", reply_markup=keyboard)
+        return
+
     status = await message.reply("⏳ Sending Task to GitHub Queue...")
+    task = {"task_type": "extract_english", "file_id": media.file_id, "format_type": format_type, "chat_id": str(message.chat.id), "msg_id": str(status.id), "file_name": base_name, "style_type": "normal"}
     
-    task = {
-        "task_type": "extract_english",
-        "file_id": media.file_id,
-        "format_type": format_type,
-        "chat_id": str(message.chat.id),
-        "msg_id": str(status.id),
-        "file_name": base_name
-    }
-    
-    users_data[message.from_user.id] = "processing"
-    # Async await lagaya hai taaki bot zinda rahe
     success, err = await trigger_github(task)
-    
-    if success:
-        await status.edit(f"✅ **Task Added to Queue!**\nName: `{base_name}`\nFormat: `.{format_type}`\n*(Agar koi file pehle se ban rahi hai, toh ye uske baad start hogi)*")
-    else:
-        await status.edit(f"❌ **Trigger Failed:** {err}")
+    if success: await status.edit(f"✅ **Task Added to Queue!**\nName: `{base_name}`\nFormat: `.{format_type}`")
+    else: await status.edit(f"❌ **Trigger Failed:** {err}")
 
 @app.on_message(filters.command(["hienglish", "English"]))
 async def translate_sub(client, message: Message):
     target_lang = message.command[0].lower()
-    if target_lang == "english":
-        return await message.reply("✅ Ye file already English me hai.")
+    if target_lang == "english": return await message.reply("✅ Ye file already English me hai.")
         
     doc = message.reply_to_message.document if message.reply_to_message else None
-    if not doc or not doc.file_name.endswith((".srt", ".vtt", ".ass")):
-        return await message.reply("❌ Please generated Subtitle file pe reply karo.")
+    if not doc or not doc.file_name.endswith((".srt", ".vtt", ".ass")): return await message.reply("❌ Please generated Subtitle file pe reply karo.")
         
     base_name = doc.file_name.rsplit(".", 1)[0]
     format_type = doc.file_name.split('.')[-1]
     
+    if format_type == "ass":
+        users_data[message.from_user.id] = {
+            "task_type": "translate_hinglish", "file_id": doc.file_id, 
+            "format_type": "ass", "chat_id": str(message.chat.id), "file_name": base_name
+        }
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎨 ASI Style + Watermark", callback_data="style_asi")],
+            [InlineKeyboardButton("📄 Normal Direct Style", callback_data="style_normal")]
+        ])
+        await message.reply("❓ **Kaunsa Style lagana hai?**", reply_markup=keyboard)
+        return
+
     status = await message.reply("⏳ Sending Translation to GitHub Queue...")
+    task = {"task_type": "translate_hinglish", "file_id": doc.file_id, "format_type": format_type, "chat_id": str(message.chat.id), "msg_id": str(status.id), "file_name": base_name, "style_type": "normal"}
+    
+    success, err = await trigger_github(task)
+    if success: await status.edit("✅ **Added to Queue!**\nBatch Translating to Hinglish...")
+    else: await status.edit(f"❌ **Trigger Failed:** {err}")
+
+@app.on_callback_query(filters.regex("^style_"))
+async def handle_style_selection(client, callback_query: CallbackQuery):
+    uid = callback_query.from_user.id
+    if uid not in users_data: return await callback_query.answer("No active task!", show_alert=True)
+    
+    style_choice = "asi_style" if callback_query.data == "style_asi" else "normal"
+    d = users_data.pop(uid)
+    
+    await callback_query.message.edit_text("⏳ Sending Task to GitHub Queue with selected style...")
     
     task = {
-        "task_type": "translate_hinglish",
-        "file_id": doc.file_id,
-        "format_type": format_type,
-        "chat_id": str(message.chat.id),
-        "msg_id": str(status.id),
-        "file_name": base_name
+        "task_type": d["task_type"],
+        "file_id": d["file_id"],
+        "format_type": d["format_type"],
+        "chat_id": d["chat_id"],
+        "msg_id": str(callback_query.message.id),
+        "file_name": d["file_name"],
+        "style_type": style_choice
     }
     
-    users_data[message.from_user.id] = "processing"
-    # Async await lagaya hai
     success, err = await trigger_github(task)
-    
-    if success:
-        await status.edit("✅ **Added to Queue!**\nBatch Translating to Hinglish...\n*(Agar koi file pehle se ban rahi hai, toh ye uske baad start hogi)*")
-    else:
-        await status.edit(f"❌ **Trigger Failed:** {err}")
+    if success: await callback_query.message.edit_text(f"✅ **Task Added to Queue!**\nStyle: `{style_choice}`")
+    else: await callback_query.message.edit_text(f"❌ **Trigger Failed:** {err}")
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200); self.end_headers(); self.wfile.write(b"Bot is Alive!")
 
-# 🟢 FIX 2: ANTI-SLEEP (Render ko 15 min me sone nahi dega)
 async def keep_alive():
     while True:
-        await asyncio.sleep(5 * 60) # Har 5 minute me bot khud ko jagayega
-        try:
-            requests.get("http://localhost:10000")
-        except:
-            pass
+        await asyncio.sleep(5 * 60)
+        try: requests.get("http://localhost:10000")
+        except: pass
 
 async def main():
     await app.start()
     print("🤖 Bot Started Successfully!")
-    asyncio.create_task(keep_alive()) # Keep-alive start kiya
+    asyncio.create_task(keep_alive())
     await idle()
 
 if __name__ == "__main__":
