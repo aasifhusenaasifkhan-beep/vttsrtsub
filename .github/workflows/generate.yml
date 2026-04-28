@@ -15,8 +15,9 @@ on:
         required: true
       file_name:
         required: true
+      style_type:
+        required: true
 
-# 🟢 FIX 3: QUEUE SYSTEM (Ek baar me 1 hi processing hogi, baaki wait karengi)
 concurrency:
   group: sub-generator-queue
   cancel-in-progress: false
@@ -52,4 +53,5 @@ jobs:
           CHAT_ID: ${{ github.event.inputs.chat_id }}
           MSG_ID: ${{ github.event.inputs.msg_id }}
           FILE_NAME: ${{ github.event.inputs.file_name }}
+          STYLE_TYPE: ${{ github.event.inputs.style_type }}
         run: python generator.py
