@@ -24,25 +24,18 @@ jobs:
   encode_job:
     runs-on: ubuntu-latest
     timeout-minutes: 180
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
+      - name: Install Sys Deps
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-
-      - name: Install Python Dependencies
+      - name: Install Py Deps
         run: pip install pyrogram tgcrypto
-
-      - name: Run Master Encoder Script
+      - name: Run Encoder
         env:
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
@@ -56,7 +49,6 @@ jobs:
           WM_POS: ${{ github.event.inputs.wm_pos }}
           RENAME: ${{ github.event.inputs.rename }}
         run: python encoder.py
-
-      - name: 100% Force Cleanup (Empty Server Data)
+      - name: Cleanup
         if: always()
         run: rm -rf *
