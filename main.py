@@ -2,8 +2,8 @@ import os, time, asyncio, threading, requests
 from pyrogram import Client, filters, idle
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from pyrogram.errors import FloodWait
 
-# .strip() lagaya hai taaki agar galti se koi space copy ho jaye toh wo automatically hat jaye
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "").strip()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -15,8 +15,8 @@ OWNER_ID = 5351848105
 ALLOWED_USERS = [5344078567]             
 ALLOWED_GROUPS = [-1003899919015] 
 
-# in_memory=True kiya hai taaki koi purani corrupt session file load na ho aur crash bache
-app = Client("AllInOneBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
+# Session file save hogi taaki Render baar-baar auth na maange (FloodWait se bachne ke liye)
+app = Client("AllInOneBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 users_data, UNAUTHORIZED_CAPTURED, BANNED_USERS = {}, set(), set()
 BOT_BUSY, SLEEP_UNTIL = False, 0
@@ -195,9 +195,17 @@ async def send_hsub(uid, msg):
     await st.edit("✅ Process started on GitHub!" if succ else f"❌ Error: {err}")
     BOT_BUSY = False
 
-# ================= RENDER ANTI-SLEEP & STARTUP FIX =================
+# ================= RENDER ANTI-SLEEP & STARTUP FIX (FIXED 501 ERROR) =================
 class Health(BaseHTTPRequestHandler):
-    def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"Bot Alive!")
+    def do_GET(self): 
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot Alive!")
+    
+    # Ye HEAD request Render pinger ke liye add ki gayi hai
+    def do_HEAD(self): 
+        self.send_response(200)
+        self.end_headers()
 
 async def keep_alive():
     while True:
@@ -206,15 +214,18 @@ async def keep_alive():
         except: pass
 
 async def main_loop():
-    await app.start()
-    print("🚀 All-in-One Bot Started! Render Anti-Sleep Active.")
-    asyncio.create_task(keep_alive())
-    await idle()
-    await app.stop()
+    try:
+        await app.start()
+        print("🚀 All-in-One Bot Started! Render Anti-Sleep Active.")
+        asyncio.create_task(keep_alive())
+        await idle()
+        await app.stop()
+    except FloodWait as e:
+        print(f"Bhai Telegram ne FloodWait diya hai: {e.value} seconds ka wait karo.")
+        await asyncio.sleep(e.value)
+    except Exception as e:
+        print(f"Bot Crashed: {e}")
 
 if __name__ == "__main__":
     threading.Thread(target=lambda: HTTPServer(("0.0.0.0", PORT), Health).serve_forever(), daemon=True).start()
-    try:
-        asyncio.get_event_loop().run_until_complete(main_loop())
-    except Exception as e:
-        print(f"Bot Crashed: {e}")
+    asyncio.get_event_loop().run_until_complete(main_loop())
