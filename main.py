@@ -3,18 +3,20 @@ from pyrogram import Client, filters, idle
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+# .strip() lagaya hai taaki agar galti se koi space copy ho jaye toh wo automatically hat jaye
 API_ID = int(os.getenv("API_ID", "0"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-REPO_NAME = os.getenv("REPO_NAME")
+API_HASH = os.getenv("API_HASH", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
+REPO_NAME = os.getenv("REPO_NAME", "").strip()
 PORT = 10000
 
 OWNER_ID = 5351848105       
 ALLOWED_USERS = [5344078567]             
 ALLOWED_GROUPS = [-1003899919015] 
 
-app = Client("AllInOneBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# in_memory=True kiya hai taaki koi purani corrupt session file load na ho aur crash bache
+app = Client("AllInOneBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 
 users_data, UNAUTHORIZED_CAPTURED, BANNED_USERS = {}, set(), set()
 BOT_BUSY, SLEEP_UNTIL = False, 0
@@ -130,7 +132,6 @@ async def inputs(c, m: Message):
     if uid not in users_data: return
     d, state = users_data[uid], users_data[uid].get("state")
     
-    # Text input for Custom Prompt
     if d.get("type") == "generate" and state == "WAIT_PROMPT" and m.text:
         d["custom_prompt"] = m.text
         if d["format_type"] == "ass":
@@ -139,7 +140,6 @@ async def inputs(c, m: Message):
         else:
             await send_gen_task(uid, m, "normal")
 
-    # Image/Doc inputs for Hardsub
     elif d.get("type") == "encode":
         if state == "WAIT_SUB" and m.document and m.document.file_name.endswith((".srt", ".ass")):
             d["sub_id"], d["state"] = m.document.file_id, "WAIT_WM_CHOICE"
@@ -195,7 +195,7 @@ async def send_hsub(uid, msg):
     await st.edit("✅ Process started on GitHub!" if succ else f"❌ Error: {err}")
     BOT_BUSY = False
 
-# ================= RENDER ANTI-SLEEP =================
+# ================= RENDER ANTI-SLEEP & STARTUP FIX =================
 class Health(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"Bot Alive!")
 
@@ -205,9 +205,16 @@ async def keep_alive():
         try: requests.get("http://127.0.0.1:10000")
         except: pass
 
+async def main_loop():
+    await app.start()
+    print("🚀 All-in-One Bot Started! Render Anti-Sleep Active.")
+    asyncio.create_task(keep_alive())
+    await idle()
+    await app.stop()
+
 if __name__ == "__main__":
     threading.Thread(target=lambda: HTTPServer(("0.0.0.0", PORT), Health).serve_forever(), daemon=True).start()
-    asyncio.get_event_loop().run_until_complete(app.start())
-    asyncio.create_task(keep_alive())
-    print("🚀 All-in-One Bot Started! Render Anti-Sleep Active.")
-    idle()
+    try:
+        asyncio.get_event_loop().run_until_complete(main_loop())
+    except Exception as e:
+        print(f"Bot Crashed: {e}")
