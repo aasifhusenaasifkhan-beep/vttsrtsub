@@ -1,8 +1,4 @@
-import os
-import time
-import asyncio
-import threading
-import requests
+import os, time, asyncio, threading, requests
 from pyrogram import Client, filters, idle
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -18,244 +14,200 @@ OWNER_ID = 5351848105
 ALLOWED_USERS = [5344078567]             
 ALLOWED_GROUPS = [-1003899919015] 
 
-app = Client("ManagerBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+app = Client("AllInOneBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# Variables
-users_data = {}
-UNAUTHORIZED_CAPTURED = set() 
-BANNED_USERS = set()
+users_data, UNAUTHORIZED_CAPTURED, BANNED_USERS = {}, set(), set()
+BOT_BUSY, SLEEP_UNTIL = False, 0
 
-BOT_BUSY = False
-SLEEP_UNTIL = 0
-
-edit = "Maintanence by: @Sub_and_hardsub"
-
-def is_authorized(message: Message) -> bool:
-    if not message.from_user: return False
-    u_id = message.from_user.id    
+def is_authorized(m: Message):
+    if not m.from_user: return False
+    u_id = m.from_user.id    
     if u_id in BANNED_USERS: return False
-    if u_id == OWNER_ID or u_id in ALLOWED_USERS or message.chat.id in ALLOWED_GROUPS:
-        return True
-    
-    # Anjaan user ki ID save karega par reply kuch nahi karega (Ghost Mode)
+    if u_id == OWNER_ID or u_id in ALLOWED_USERS or m.chat.id in ALLOWED_GROUPS: return True
     UNAUTHORIZED_CAPTURED.add(u_id)
     return False
 
-def _send_to_github(task):
-    url = f"https://api.github.com/repos/{REPO_NAME}/actions/workflows/encode.yml/dispatches"
-    headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json"
-    }
+def _send_to_github(workflow_name, task):
+    url = f"https://api.github.com/repos/{REPO_NAME}/actions/workflows/{workflow_name}/dispatches"
+    headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"}
     payload = {"ref": "main", "inputs": task}
     try:
         r = requests.post(url, headers=headers, json=payload)
-        if r.status_code == 204:
-            return True, "Success"
-        else:
-            return False, f"Code {r.status_code}: {r.text}"
-    except Exception as e:
-        return False, str(e)
+        return (True, "Success") if r.status_code == 204 else (False, f"Code {r.status_code}: {r.text}")
+    except Exception as e: return False, str(e)
 
-async def trigger_github(task):
-    return await asyncio.to_thread(_send_to_github, task)
-
-# ================= ADMIN CONTROLS =================
-
-@app.on_message(filters.command("add") & filters.user(OWNER_ID))
-async def add_user(client, message: Message):
-    try:
-        new_id = int(message.command[1])
-        if new_id not in ALLOWED_USERS:
-            ALLOWED_USERS.append(new_id)
-            if new_id in UNAUTHORIZED_CAPTURED:
-                UNAUTHORIZED_CAPTURED.remove(new_id)
-            await message.reply(f"✅ User `{new_id}` allowed.")
-        else:
-            await message.reply("⚠️ User already authorized.")
-    except:
-        await message.reply("❌ Use: `/add user_id`")
-
-@app.on_message(filters.command("unauth") & filters.user(OWNER_ID))
-async def show_unauth(client, message: Message):
-    if not UNAUTHORIZED_CAPTURED:
-        return await message.reply("No unauthorized attempts caught yet.")
-    ids = "\n".join([f"`{uid}`" for uid in UNAUTHORIZED_CAPTURED])
-    await message.reply(f"🚨 **Unauthorized Attempts:**\n{ids}\n\nUse `/add user_id` to allow them.")
-
-@app.on_message(filters.command("sleep") & filters.user(OWNER_ID))
-async def sleep_bot(client, message: Message):
-    global SLEEP_UNTIL
-    try:
-        hours = float(message.command[1])
-        SLEEP_UNTIL = time.time() + (hours * 3600)
-        await message.reply(f"😴 Bot goes to sleep for {hours} hours. (Use /unsleep to wake up)")
-    except:
-        await message.reply("❌ Use: `/sleep 2`")
-
-@app.on_message(filters.command("unsleep") & filters.user(OWNER_ID))
-async def unsleep_bot(client, message: Message):
-    global SLEEP_UNTIL
-    SLEEP_UNTIL = 0
-    await message.reply("☀️ Bot is awake and ready!")
-
-@app.on_message(filters.command(["cancel", "remm"]))
-async def cancel_task(client, message: Message):
-    global BOT_BUSY
-    if not is_authorized(message): return
-    uid = message.from_user.id
-    if uid in users_data:
-        del users_data[uid]
-    BOT_BUSY = False 
-    await message.reply("🛑 Task memory cleared. Bot is now FREE.")
-
-# ================= MAIN LOGIC =================
+async def trigger_github(workflow_name, task): 
+    return await asyncio.to_thread(_send_to_github, workflow_name, task)
 
 @app.on_message(filters.command("start"))
-async def start(client, message: Message):
-    if not is_authorized(message): return
-    if time.time() < SLEEP_UNTIL: return
-    await message.reply(f"<b>🔥 Hardsub bot (UltraFast + Compressed)</b>\n\n/hsub - Add subtitle\n/extracttrack - Extract Subtitle\n/cancel - Clear Memory\n/1080pdd, /720pdd, /480pdd - Resize\n\n{edit}")
+async def start(c, m: Message):
+    if not is_authorized(m) or time.time() < SLEEP_UNTIL: return
+    text = "<b>🔥 All-in-One Subtitle Bot 🔥</b>\n\n<b>🎬 Encode/Hardsub:</b> /hsub, /extracttrack, /1080pdd, /720pdd, /480pdd\n<b>📝 AI Generate:</b> Reply to Video -> `/vtt`, `/srt`, `/ass`\n<b>🇮🇳 Gemini Translate:</b> Reply to Sub File -> `/hienglish`\n\n/cancel - Clear Active Task"
+    await m.reply(text)
 
-@app.on_message(filters.command(["1080pdd", "720pdd", "480pdd"]))
-async def resize_command(client, message: Message):
+@app.on_message(filters.command(["cancel", "skip", "remm"]))
+async def cancel_task(c, m: Message):
     global BOT_BUSY
-    if not is_authorized(message): return
-    if time.time() < SLEEP_UNTIL: return
-    if BOT_BUSY: return await message.reply("❌ Bot is busy. Please wait or use /cancel.")
+    uid = m.from_user.id
+    if uid in users_data: del users_data[uid]
+    BOT_BUSY = False 
+    await m.reply("🛑 Task memory cleared. Bot is now FREE.")
 
-    target = message.command[0].replace("pdd", "")
-    media = message.reply_to_message.video or message.reply_to_message.document if message.reply_to_message else None
-    if not media: return await message.reply("❌ Reply to a video.")
-
-    BOT_BUSY = True
-    status = await message.reply(f"⏳ Sending {target}p Task to GitHub...")
-    task = {"task_type": "resize", "video_id": media.file_id, "sub_id": "none", "wm_id": "none", "wm_pos": "none", "rename": f"resized_{target}p.mp4", "chat_id": str(message.chat.id), "resolution": target}
+# ================= ENCODE / HARDSUB / COMPRESS =================
+@app.on_message(filters.command(["1080pdd", "720pdd", "480pdd"]))
+async def resize_cmd(c, m: Message):
+    global BOT_BUSY
+    if not is_authorized(m): return
+    if BOT_BUSY: return await m.reply("❌ Bot busy. Use /cancel first.")
+    media = m.reply_to_message.video or m.reply_to_message.document if m.reply_to_message else None
+    if not media: return await m.reply("❌ Reply to a video.")
     
-    success, err_msg = await trigger_github(task)
-    if success: 
-        await status.edit(f"✅ **Sent to GitHub!**\n*(Bot is now free to queue another task)*")
-    else: 
-        await status.edit(f"❌ **Trigger Failed!**\n`{err_msg}`")
+    BOT_BUSY = True
+    target = m.command[0].replace("pdd", "")
+    st = await m.reply(f"⏳ Sending {target}p Compress Task...")
+    success, err = await trigger_github("encode.yml", {"task_type": "resize", "video_id": media.file_id, "sub_id": "none", "wm_id": "none", "wm_pos": "none", "rename": f"resized_{target}p.mp4", "chat_id": str(m.chat.id), "resolution": target})
+    await st.edit("✅ Sent to GitHub! *(Bot is free)*" if success else f"❌ Failed: {err}")
     BOT_BUSY = False
 
 @app.on_message(filters.command("extracttrack"))
-async def extract_cmd(client, message: Message):
+async def extract_cmd(c, m: Message):
     global BOT_BUSY
-    if not is_authorized(message): return
-    if time.time() < SLEEP_UNTIL: return
-    if BOT_BUSY: return await message.reply("❌ Bot is busy. Please wait or use /cancel.")
-
-    media = message.reply_to_message.video or message.reply_to_message.document if message.reply_to_message else None
-    if not media: return await message.reply("❌ Reply to a video.")
-
-    BOT_BUSY = True
-    status = await message.reply("⏳ Sending Extract Task to GitHub...")
-    task = {"task_type": "extract", "video_id": media.file_id, "sub_id": "none", "wm_id": "none", "wm_pos": "none", "rename": "extracted_sub.srt", "chat_id": str(message.chat.id), "resolution": "none"}
+    if not is_authorized(m): return
+    if BOT_BUSY: return await m.reply("❌ Bot busy. Use /cancel first.")
+    media = m.reply_to_message.video or m.reply_to_message.document if m.reply_to_message else None
+    if not media: return await m.reply("❌ Reply to a video.")
     
-    success, err_msg = await trigger_github(task)
-    if success: 
-        await status.edit("✅ **Sent to GitHub! Extracting Subtitle...**\n*(Bot is now free)*")
-    else: 
-        await status.edit(f"❌ **Trigger Failed!**\n`{err_msg}`")
+    BOT_BUSY = True
+    st = await m.reply("⏳ Sending Ultra-Fast Extract Task...")
+    success, err = await trigger_github("encode.yml", {"task_type": "extract", "video_id": media.file_id, "sub_id": "none", "wm_id": "none", "wm_pos": "none", "rename": "extracted.srt", "chat_id": str(m.chat.id), "resolution": "none"})
+    await st.edit("✅ Extract Task Sent!" if success else f"❌ Failed: {err}")
     BOT_BUSY = False
 
 @app.on_message(filters.command("hsub"))
-async def hsub_cmd(client, message: Message):
+async def hsub_cmd(c, m: Message):
     global BOT_BUSY
-    if not is_authorized(message): return
-    if time.time() < SLEEP_UNTIL: return
-    if BOT_BUSY: return await message.reply("❌ Bot is busy. Please wait or use /cancel.")
-
-    media = message.reply_to_message.video or message.reply_to_message.document if message.reply_to_message else None
-    if not media: return await message.reply("❌ Reply to a video.")
+    if not is_authorized(m): return
+    if BOT_BUSY: return await m.reply("❌ Bot busy.")
+    media = m.reply_to_message.video or m.reply_to_message.document if m.reply_to_message else None
+    if not media: return await m.reply("❌ Reply to a video.")
     
     BOT_BUSY = True
-    users_data[message.from_user.id] = {"video_id": media.file_id, "chat_id": str(message.chat.id), "state": "WAIT_SUB", "file_name": media.file_name or "video.mp4"}
-    await message.reply("📄 Send Subtitle (.srt/.ass)", reply_to_message_id=message.id)
+    users_data[m.from_user.id] = {"type": "encode", "video_id": media.file_id, "chat_id": str(m.chat.id), "state": "WAIT_SUB", "file_name": media.file_name or "video.mp4"}
+    await m.reply("📄 Send Subtitle File (.srt/.ass)", reply_to_message_id=m.id)
 
-@app.on_message(filters.document | filters.video | filters.photo | filters.text)
-async def handle_inputs(client, message: Message):
-    if not is_authorized(message): return
-    if time.time() < SLEEP_UNTIL: return
-    uid = message.from_user.id
+# ================= AI SUBTITLE / TRANSLATE =================
+@app.on_message(filters.command(["vtt", "srt", "ass"]))
+async def gen_sub(c, m: Message):
+    if not is_authorized(m): return
+    ftype = m.command[0].lower()
+    media = m.reply_to_message.video or m.reply_to_message.document if m.reply_to_message else None
+    if not media: return await m.reply("❌ Please reply to a video.")
+    b_name = getattr(media, "file_name", "video.mp4").rsplit(".", 1)[0]
+    
+    if ftype == "ass":
+        users_data[m.from_user.id] = {"type": "generate", "task_type": "extract_english", "file_id": media.file_id, "format_type": "ass", "chat_id": str(m.chat.id), "file_name": b_name, "custom_prompt": "none"}
+        return await m.reply("❓ Kaunsa Style lagana hai?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎨 ASI Style + WM", callback_data="style_asi")], [InlineKeyboardButton("📄 Normal", callback_data="style_normal")]]))
+    
+    st = await m.reply("⏳ Sending AI Subtitle Task...")
+    success, err = await trigger_github("generate.yml", {"task_type": "extract_english", "file_id": media.file_id, "format_type": ftype, "chat_id": str(m.chat.id), "msg_id": str(st.id), "file_name": b_name, "style_type": "normal", "custom_prompt": "none"})
+    await st.edit("✅ AI Gen Task Sent!" if success else f"❌ Failed: {err}")
+
+@app.on_message(filters.command(["hienglish"]))
+async def trans_sub(c, m: Message):
+    if not is_authorized(m): return
+    doc = m.reply_to_message.document if m.reply_to_message else None
+    if not doc or not doc.file_name.endswith((".srt", ".vtt", ".ass")): return await m.reply("❌ Reply to a subtitle file.")
+    b_name, ftype = doc.file_name.rsplit(".", 1)[0], doc.file_name.split('.')[-1]
+    
+    users_data[m.from_user.id] = {"type": "generate", "task_type": "translate_hinglish", "file_id": doc.file_id, "format_type": ftype, "chat_id": str(m.chat.id), "file_name": b_name, "state": "WAIT_PROMPT"}
+    
+    await m.reply("✍️ **Custom Prompt Dalo** (Dialogue flow / slang change karne ke liye).\n\nAgar purana normal translation chahiye toh 'Skip' dabao.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⏭️ Skip (Normal Translate)", callback_data="prompt_skip")]]))
+
+# ================= USER INPUT HANDLERS =================
+@app.on_message(filters.document | filters.photo | filters.text)
+async def inputs(c, m: Message):
+    uid = m.from_user.id
     if uid not in users_data: return
-    state = users_data[uid].get("state")
+    d, state = users_data[uid], users_data[uid].get("state")
     
-    if state == "WAIT_SUB" and message.document and message.document.file_name.endswith((".srt", ".ass")):
-        users_data[uid]["sub_id"] = message.document.file_id
-        users_data[uid]["state"] = "WAIT_WM_CHOICE"
-        await message.reply("Add Watermark?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Yes", callback_data="wm_yes"), InlineKeyboardButton("No", callback_data="wm_skip")]]), reply_to_message_id=message.id)
-    
-    elif state == "WAIT_WM_PIC" and message.photo:
-        users_data[uid]["wm_id"] = message.photo.file_id
-        users_data[uid]["state"] = "WAIT_WM_POS"
-        await message.reply("Position:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Top-Left", callback_data="pos_TL"), InlineKeyboardButton("Top-Right", callback_data="pos_TR")]]), reply_to_message_id=message.id)
-    
-    elif state == "WAIT_RENAME_TEXT" and message.text:
-        users_data[uid]["file_name"] = message.text.strip() + ".mp4" if not message.text.endswith(".mp4") else message.text.strip()
-        await send_to_queue(uid, message)
+    # Text input for Custom Prompt
+    if d.get("type") == "generate" and state == "WAIT_PROMPT" and m.text:
+        d["custom_prompt"] = m.text
+        if d["format_type"] == "ass":
+            d["state"] = "WAIT_STYLE"
+            await m.reply("❓ Kaunsa Style lagana hai?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎨 ASI Style + WM", callback_data="style_asi")], [InlineKeyboardButton("📄 Normal", callback_data="style_normal")]]))
+        else:
+            await send_gen_task(uid, m, "normal")
+
+    # Image/Doc inputs for Hardsub
+    elif d.get("type") == "encode":
+        if state == "WAIT_SUB" and m.document and m.document.file_name.endswith((".srt", ".ass")):
+            d["sub_id"], d["state"] = m.document.file_id, "WAIT_WM_CHOICE"
+            await m.reply("Add Watermark?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Yes", callback_data="wm_yes"), InlineKeyboardButton("No", callback_data="wm_skip")]]))
+        elif state == "WAIT_WM_PIC" and m.photo:
+            d["wm_id"], d["state"] = m.photo.file_id, "WAIT_WM_POS"
+            await m.reply("Watermark Position:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Top-Left", callback_data="pos_TL"), InlineKeyboardButton("Top-Right", callback_data="pos_TR")]]))
+        elif state == "WAIT_RENAME_TEXT" and m.text:
+            d["file_name"] = m.text.strip() + ".mp4" if not m.text.endswith(".mp4") else m.text.strip()
+            await send_hsub(uid, m)
 
 @app.on_callback_query()
-async def callbacks(client, query: CallbackQuery):
-    uid = query.from_user.id
-    if uid not in users_data: return await query.answer("No active task!", show_alert=True)
-    d = query.data
+async def cbs(c, q: CallbackQuery):
+    uid = q.from_user.id
+    if uid not in users_data: return await q.answer("No active task!", show_alert=True)
+    d, data = users_data[uid], q.data
     
-    if d == "wm_yes":
-        users_data[uid]["state"] = "WAIT_WM_PIC"
-        await query.message.edit("🖼️ Send Photo for Watermark.")
-    elif d == "wm_skip":
-        users_data[uid]["wm_id"] = "none"
-        users_data[uid]["wm_pos"] = "none"
-        users_data[uid]["state"] = "WAIT_RENAME_CHOICE"
-        await ask_rename(query.message)
-    elif d.startswith("pos_"):
-        users_data[uid]["wm_pos"] = "TL" if d == "pos_TL" else "TR"
-        users_data[uid]["state"] = "WAIT_RENAME_CHOICE"
-        await ask_rename(query.message)
-    elif d == "rn_yes":
-        users_data[uid]["state"] = "WAIT_RENAME_TEXT"
-        await query.message.edit("📝 Send new file name.")
-    elif d == "rn_skip":
-        await send_to_queue(uid, query.message)
+    if data == "prompt_skip":
+        d["custom_prompt"] = "none"
+        if d["format_type"] == "ass":
+            d["state"] = "WAIT_STYLE"
+            await q.message.edit("❓ Kaunsa Style lagana hai?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎨 ASI Style + WM", callback_data="style_asi")], [InlineKeyboardButton("📄 Normal", callback_data="style_normal")]]))
+        else:
+            await send_gen_task(uid, q.message, "normal")
+            
+    elif data.startswith("style_"):
+        style = "asi_style" if data == "style_asi" else "normal"
+        await send_gen_task(uid, q.message, style)
 
-async def ask_rename(msg):
-    await msg.edit("Rename file?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Yes", callback_data="rn_yes"), InlineKeyboardButton("Skip", callback_data="rn_skip")]]))
+    elif d.get("type") == "encode":
+        if data == "wm_yes": d["state"] = "WAIT_WM_PIC"; await q.message.edit("🖼️ Send Photo for Watermark.")
+        elif data in ["wm_skip", "pos_TL", "pos_TR"]:
+            if data == "wm_skip": d["wm_id"] = d["wm_pos"] = "none"
+            else: d["wm_pos"] = "TL" if data == "pos_TL" else "TR"
+            d["state"] = "WAIT_RENAME_CHOICE"
+            await q.message.edit("Rename file?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Yes", callback_data="rn_yes"), InlineKeyboardButton("Skip", callback_data="rn_skip")]]))
+        elif data == "rn_yes": d["state"] = "WAIT_RENAME_TEXT"; await q.message.edit("📝 Send new file name.")
+        elif data == "rn_skip": await send_hsub(uid, q.message)
 
-async def send_to_queue(uid, msg):
+async def send_gen_task(uid, msg, style):
+    d = users_data.pop(uid)
+    st = await msg.reply("⏳ Sending Translate Task to GitHub...") if not isinstance(msg, Message) else await msg.edit("⏳ Sending Translate Task...")
+    task = {"task_type": d["task_type"], "file_id": d["file_id"], "format_type": d["format_type"], "chat_id": d["chat_id"], "msg_id": str(st.id if isinstance(msg, Message) else msg.id), "file_name": d["file_name"], "style_type": style, "custom_prompt": d.get("custom_prompt", "none")}
+    succ, err = await trigger_github("generate.yml", task)
+    await (st.edit if isinstance(msg, Message) else msg.edit)(f"✅ Sent to GitHub! Style: `{style}`" if succ else f"❌ Error: {err}")
+
+async def send_hsub(uid, msg):
     global BOT_BUSY
     d = users_data.pop(uid)
-    task = {
-        "task_type": "hsub",
-        "video_id": d["video_id"],
-        "sub_id": d.get("sub_id", "none"),
-        "wm_id": d.get("wm_id", "none"),
-        "wm_pos": d.get("wm_pos", "none"),
-        "rename": d.get("file_name", "output.mp4"),
-        "chat_id": d["chat_id"],
-        "resolution": "none"
-    }
-    status = await msg.reply("⏳ Sending Task to GitHub...")
-    success, err_msg = await trigger_github(task)
-    if success: 
-        await status.edit("✅ **Sent to GitHub! Process started.**")
-    else: 
-        await status.edit(f"❌ **Trigger Failed!**\nGitHub said: `{err_msg}`")
+    task = {"task_type": "hsub", "video_id": d["video_id"], "sub_id": d.get("sub_id", "none"), "wm_id": d.get("wm_id", "none"), "wm_pos": d.get("wm_pos", "none"), "rename": d.get("file_name", "output.mp4"), "chat_id": d["chat_id"], "resolution": "none"}
+    st = await msg.reply("⏳ Sending Task to GitHub...")
+    succ, err = await trigger_github("encode.yml", task)
+    await st.edit("✅ Process started on GitHub!" if succ else f"❌ Error: {err}")
     BOT_BUSY = False
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is Running")
+# ================= RENDER ANTI-SLEEP =================
+class Health(BaseHTTPRequestHandler):
+    def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"Bot Alive!")
 
-async def main():
-    if edit != "Maintanence by: @Sub_and_hardsub": return
-    await app.start()
-    print("Bot started: Anti-Sleep & Ghost Mode Enabled.")
-    await idle()
+async def keep_alive():
+    while True:
+        await asyncio.sleep(4 * 60)
+        try: requests.get("http://127.0.0.1:10000")
+        except: pass
 
 if __name__ == "__main__":
-    threading.Thread(target=lambda: HTTPServer(("0.0.0.0", PORT), HealthHandler).serve_forever(), daemon=True).start()
-    asyncio.get_event_loop().run_until_complete(main())
+    threading.Thread(target=lambda: HTTPServer(("0.0.0.0", PORT), Health).serve_forever(), daemon=True).start()
+    asyncio.get_event_loop().run_until_complete(app.start())
+    asyncio.create_task(keep_alive())
+    print("🚀 All-in-One Bot Started! Render Anti-Sleep Active.")
+    idle()
